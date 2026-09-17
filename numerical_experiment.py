@@ -5,6 +5,7 @@ Rigorous numerical evaluation of expressibility limits in qGANs.
 Features:
  - Multi-seed statistical benchmark (L = 3, N = 30 seeds)
  - Full depth-ablation study (L in {2, 3, 4}, N = 30 seeds strictly)
+ - Post-update terminal evaluation (true state after 180 Adam updates)
  - Exact trace-norm analytical subgradient calculus
  - Generates publication figure: 'qgan_geometric_barrier3.pdf' and '.png'
  - Prints full statistics table for direct LaTeX synchronization
@@ -176,7 +177,7 @@ LR = 0.08
 L_FIXED = 3
 
 depths = [2, 3, 4]
-N_SEEDS_DEPTH = 30      # STRICTLY N = 30 (Matches Table 1 and Section 6.3)
+N_SEEDS_DEPTH = 30
 STEPS_DEPTH = 180
 
 print("=" * 75)
@@ -244,8 +245,12 @@ for sc in scenarios:
                 m_hat = m_adam / (1 - beta1**t)
                 v_hat = v_adam / (1 - beta2**t)
                 params -= LR * m_hat / (np.sqrt(v_hat) + eps_adam)
-                
-            depth_final_loss[a][L].append(loss_val)
+            
+            # Post-update evaluation: evaluates the true state after 180 updates
+            final_loss, _ = simulate_circuit_and_gradient(
+                params, n_total, L, cnot_list, tau, m, a
+            )
+            depth_final_loss[a][L].append(final_loss)
 
 total_elapsed = time.time() - start_time
 print(f"\nAll computations completed successfully in {total_elapsed:.1f} seconds.")
@@ -254,7 +259,7 @@ print(f"\nAll computations completed successfully in {total_elapsed:.1f} seconds
 # 4. PRINT FORMATTED SUMMARY TABLE (Direct input for Table 1 in paper)
 # ==============================================================================
 print("\n" + "=" * 95)
-print(" SUMMARY TABLE OF RESULTS (N = 30 seeds, 180 iterations)")
+print(" SUMMARY TABLE OF RESULTS (N = 30 seeds, 180 iterations, Post-Update)")
 print("=" * 95)
 header = f"{'Ancillas':<10} {'Depth':<8} {'Params':<8} {'Final Error (Mean +- SD)':<26} {'Median':<10} {'Best Run':<10} {'Barrier T_K':<12} {'Tol. eps=0.15'}"
 print(header)
