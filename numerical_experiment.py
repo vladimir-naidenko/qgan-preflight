@@ -7,7 +7,8 @@ Features:
  - Full depth-ablation study (L in {2, 3, 4}, N = 30 seeds strictly)
  - Post-update terminal evaluation (true state after 180 Adam updates)
  - Exact trace-norm analytical subgradient calculus
- - Generates publication figure: 'qgan_geometric_barrier3.pdf' and '.png'
+ - Robust file saving (handles Windows Adobe Acrobat file locks gracefully)
+ - Generates publication figure: 'qgan_geometric_barrier.pdf' and '.png'
  - Prints full statistics table for direct LaTeX synchronization
 """
 
@@ -15,6 +16,7 @@ import numpy as np
 import scipy.linalg as la
 import matplotlib.pyplot as plt
 import time
+import os
 
 # ==============================================================================
 # 1. PHYSICAL TARGET: 1D 3-Qubit Heisenberg Spin Chain (m = 3, d = 8)
@@ -283,7 +285,7 @@ for sc in scenarios:
 print("=" * 95)
 
 # ==============================================================================
-# 5. PUBLICATION-QUALITY FIGURE (Saved as 'qgan_geometric_barrier3.pdf')
+# 5. PUBLICATION-QUALITY FIGURE WITH ROBUST SAVER
 # ==============================================================================
 plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
 fig = plt.figure(figsize=(12.0, 9.5), dpi=300)
@@ -317,7 +319,7 @@ ax1.set_ylim(-0.01, 0.75)
 ax1.set_xlim(1, STEPS)
 ax1.legend(loc="upper right", frameon=True, fontsize=8.0, ncol=3)
 
-# Panel (b)
+# Panel (b) - Synchronized title with paper caption
 width = 0.22
 x_indices = np.arange(len(depths))
 
@@ -340,7 +342,7 @@ ax2.set_xticks(x_indices)
 ax2.set_xticklabels([f"L = {L}" for L in depths], fontsize=10, fontweight="bold")
 ax2.set_ylabel(r"Final trace distance $\Delta(\sigma_*, \tau)$", fontsize=11, fontweight="bold")
 ax2.set_xlabel("Ansatz circuit depth $L$", fontsize=11, fontweight="bold")
-ax2.set_title(r"(b) Expressibility vs. depth ablation ($N=30$ seeds)", fontsize=12, fontweight="bold", pad=8)
+ax2.set_title(r"(b) Terminal trace distance vs. depth ablation ($N=30$ seeds)", fontsize=12, fontweight="bold", pad=8)
 ax2.set_ylim(0, 0.40)
 ax2.legend(loc="upper right", frameon=True, fontsize=8.0)
 
@@ -363,7 +365,35 @@ ax3.set_xlim(1, STEPS)
 ax3.legend(loc="upper right", frameon=True, fontsize=8.5)
 
 plt.tight_layout()
-figure_filename = "qgan_geometric_barrier3"
-plt.savefig(f"{figure_filename}.pdf", bbox_inches="tight")
-plt.savefig(f"{figure_filename}.png", bbox_inches="tight")
-print(f"\n[OK] Generated high-resolution publication figures: '{figure_filename}.pdf' and '.png'!")
+
+def robust_save_figure(figure, base_name="qgan_geometric_barrier", exts=("pdf", "png")):
+    """
+    Saves figure robustly. If a file is locked by a viewer (e.g. Adobe Acrobat on Windows),
+    it avoids crashing and writes an alternative fallback file instead.
+    """
+    for ext in exts:
+        target_path = f"{base_name}.{ext}"
+        
+        # Try deleting prior file if possible
+        if os.path.exists(target_path):
+            try:
+                os.remove(target_path)
+            except OSError:
+                pass  # If locked, saving will trigger PermissionError below
+                
+        try:
+            figure.savefig(target_path, bbox_inches="tight")
+            print(f"[OK] Saved figure: '{target_path}'")
+        except PermissionError:
+            fallback_path = f"{base_name}_fallback_{int(time.time())}.{ext}"
+            print(f"[!] Warning: '{target_path}' is locked by another process (e.g., Adobe Acrobat Reader).")
+            print(f"    Writing fallback copy to '{fallback_path}' instead.")
+            try:
+                figure.savefig(fallback_path, bbox_inches="tight")
+                print(f"[OK] Saved fallback figure: '{fallback_path}'")
+            except Exception as err:
+                print(f"[ERROR] Could not save fallback: {err}")
+        except Exception as err:
+            print(f"[ERROR] Unexpected error while saving '{target_path}': {err}")
+
+robust_save_figure(fig, base_name="qgan_geometric_barrier", exts=("pdf", "png"))
