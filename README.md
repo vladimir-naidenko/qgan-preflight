@@ -95,7 +95,7 @@ If you find this framework or code useful in your research, please cite:
 @article{Naidenko2026qgan,
   title   = {Expressibility Limits and Approximate Equilibrium Bounds in Quantum Generative Adversarial Networks},
   author  = {Naidenko, Vladimir G.},
-  journal = {arXiv preprint arXiv:2603.xxxxx},
+  journal = {ResearchGate preprint https://doi.org/10.13140/RG.2.2.24299.50726},
   year    = {2026}
 }
 ```
