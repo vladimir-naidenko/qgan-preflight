@@ -19,7 +19,7 @@ Quantum generative adversarial networks (qGANs) frequently encounter severe trai
 * **Unified Effective Resource Rank:**  
   $$K_{\mathrm{eff}} = \min\\{2^m, 2^a, \prod_{\ell=1}^g q_\ell\\}$$
 * **Necessary Ancilla Capacity Rule:**  
-  $$\min\{2^m, 2^a\} \ge k_\epsilon(\tau) \implies a \ge \lceil\log_2 k_\epsilon(\tau)\rceil$$
+  $$\min\\{2^m, 2^a\\} \ge k_\epsilon(\tau) \implies a \ge \lceil\log_2 k_\epsilon(\tau)\rceil$$
 * **Purity-Based Impossibility Certificate:**  
   $$r \ge \max\\{0, 1 - \sqrt{K p}\\}, \quad p = \text{Tr}(\tau^2)$$
 
