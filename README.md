@@ -28,7 +28,7 @@ Quantum generative adversarial networks (qGANs) frequently encounter severe trai
 ## Repository Structure
 
 * `preflight_audit.py`  
-  **Zero-cost analytical screening module.** Given target state spectrum invariants or purity bounds, audits candidate ansatzes in milliseconds and outputs formal impossibility certificates without variational optimization.
+  **Low-cost analytical screening module.** Given target state spectrum invariants or purity bounds, audits candidate ansatzes in milliseconds and outputs formal impossibility certificates without variational optimization.
 * `numerical_experiment.py`  
   **Full statistical optimization benchmark.** Replicates the 3-qubit Heisenberg thermal state synthesis study ($N = 30$ independent random seeds across depths $L \in \{2, 3, 4\}$ and ancillas $a \in \{0, 1, 2\}$, 270 total runs). Computes analytical trace-norm subgradients via Helstrom projectors and generates publication figures.
 * `qgan_geometric_barrier.pdf` / `.png`  
