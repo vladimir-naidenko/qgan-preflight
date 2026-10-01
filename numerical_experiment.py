@@ -362,7 +362,7 @@ ax3.set_ylabel(r"Exact subgradient norm $\|\nabla_\theta \Delta\|$", fontsize=11
 ax3.set_title(r"(c) Evolution of analytical subgradient norm", fontsize=12, fontweight="bold", pad=8)
 ax3.set_yscale("log")
 ax3.set_xlim(1, STEPS)
-ax3.legend(loc="upper right", frameon=True, fontsize=8.5)
+ax3.legend(loc="lower left", frameon=True, fontsize=8.5)
 
 plt.tight_layout()
 
