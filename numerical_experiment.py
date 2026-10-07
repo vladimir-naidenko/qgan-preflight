@@ -7,6 +7,7 @@ Features:
  - Full depth-ablation study (L in {2, 3, 4}, N = 30 seeds strictly)
  - Post-update terminal evaluation (true state after 180 Adam updates)
  - Exact trace-norm analytical subgradient calculus
+ - Publication-calibrated font scaling (8-11 pt, fully legible in two-column layout)
  - Robust file saving (handles Windows Adobe Acrobat file locks gracefully)
  - Generates publication figure: 'qgan_geometric_barrier.pdf' and '.png'
  - Prints full statistics table for direct LaTeX synchronization
@@ -168,9 +169,9 @@ def simulate_circuit_and_gradient(params, n, layers, cnot_list, target_tau, m_sy
 # 3. EXPERIMENT CONFIGURATION (N = 30 everywhere for exact replication)
 # ==============================================================================
 scenarios = [
-    {"a": 0, "label": "Pure generator (a = 0)", "color": "#d62728", "bound": T1},
-    {"a": 1, "label": "One ancilla (a = 1)",    "color": "#ff7f0e", "bound": T2},
-    {"a": 2, "label": "Two ancillas (a = 2)",   "color": "#2ca02c", "bound": T4}
+    {"a": 0, "name": "Pure (a = 0)",       "color": "#d62728", "bound": T1},
+    {"a": 1, "name": "1 ancilla (a = 1)",   "color": "#ff7f0e", "bound": T2},
+    {"a": 2, "name": "2 ancillas (a = 2)",  "color": "#2ca02c", "bound": T4}
 ]
 
 N_SEEDS = 30
@@ -258,7 +259,7 @@ total_elapsed = time.time() - start_time
 print(f"\nAll computations completed successfully in {total_elapsed:.1f} seconds.")
 
 # ==============================================================================
-# 4. PRINT FORMATTED SUMMARY TABLE (Direct input for Table 1 in paper)
+# 4. PRINT FORMATTED SUMMARY TABLE (Direct input for Table 3 in paper)
 # ==============================================================================
 print("\n" + "=" * 95)
 print(" SUMMARY TABLE OF RESULTS (N = 30 seeds, 180 iterations, Post-Update)")
@@ -285,11 +286,13 @@ for sc in scenarios:
 print("=" * 95)
 
 # ==============================================================================
-# 5. PUBLICATION-QUALITY FIGURE WITH ROBUST SAVER
+# 5. PUBLICATION-QUALITY FIGURE CALIBRATED FOR 2-COLUMN LAYOUT
 # ==============================================================================
 plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
-fig = plt.figure(figsize=(12.0, 9.5), dpi=300)
-gs = fig.add_gridspec(2, 2, height_ratios=[1.1, 1.0])
+
+# 8.6 x 6.6 inches: comfortable canvas with generous margins and large fonts
+fig = plt.figure(figsize=(8.6, 6.6), dpi=300)
+gs = fig.add_gridspec(2, 2, height_ratios=[1.15, 1.0], hspace=0.36, wspace=0.30)
 
 ax1 = fig.add_subplot(gs[0, :])
 ax2 = fig.add_subplot(gs[1, 0])
@@ -305,21 +308,23 @@ for sc in scenarios:
     q10 = np.percentile(data, 10, axis=0)
     q90 = np.percentile(data, 90, axis=0)
     
-    ax1.plot(x_steps, median, label=f"{sc['label']} (median)", color=sc["color"], lw=2.2)
-    ax1.fill_between(x_steps, q10, q90, color=sc["color"], alpha=0.18, label=f"{sc['label']} (10-90%)")
-    ax1.axhline(sc["bound"], color=sc["color"], linestyle="--", lw=1.6, alpha=0.85,
+    ax1.plot(x_steps, median, label=f"{sc['name']} (med.)", color=sc["color"], lw=2.0)
+    ax1.fill_between(x_steps, q10, q90, color=sc["color"], alpha=0.18, label=f"{sc['name']} (10-90%)")
+    ax1.axhline(sc["bound"], color=sc["color"], linestyle="--", lw=1.3, alpha=0.85,
                 label=rf"Barrier $T_{{{2**a if a>0 else 1}}} = {sc['bound']:.4f}$")
 
-ax1.axhline(0.15, color="black", linestyle=":", lw=1.8, label=r"Tolerance $\epsilon = 0.15$")
-ax1.set_ylabel(r"Trace distance $\Delta(\sigma_\theta, \tau)$", fontsize=11, fontweight="bold")
-ax1.set_xlabel("Optimization step", fontsize=11, fontweight="bold")
+ax1.axhline(0.15, color="black", linestyle=":", lw=1.6, label=r"Tolerance $\epsilon = 0.15$")
+ax1.set_ylabel(r"Trace distance $\Delta(\sigma_\theta, \tau)$", fontsize=10.0, fontweight="bold")
+ax1.set_xlabel("Optimization step", fontsize=10.0, fontweight="bold")
 ax1.set_title(r"(a) Multi-seed convergence trajectories ($N=30$) vs. exact spectral barriers",
-              fontsize=12, fontweight="bold", pad=8)
-ax1.set_ylim(-0.01, 0.75)
+              fontsize=11.0, fontweight="bold", pad=9)
+ax1.set_ylim(-0.02, 0.85)  # Generous headroom for legend above the curves
 ax1.set_xlim(1, STEPS)
-ax1.legend(loc="upper right", frameon=True, fontsize=8.0, ncol=3)
+ax1.tick_params(labelsize=9.0)
+ax1.legend(loc="upper right", frameon=True, fontsize=8.2, ncol=3,
+           borderpad=0.3, labelspacing=0.25, handlelength=1.3, handletextpad=0.35, columnspacing=0.7)
 
-# Panel (b) - Synchronized title with paper caption
+# Panel (b)
 width = 0.22
 x_indices = np.arange(len(depths))
 
@@ -329,22 +334,24 @@ for idx, sc in enumerate(scenarios):
     stds = [np.std(depth_final_loss[a][L]) for L in depths]
     mins = [np.min(depth_final_loss[a][L]) for L in depths]
     
-    ax2.bar(x_indices + (idx - 1) * width, means, width, yerr=stds, capsize=4,
-            label=sc["label"], color=sc["color"], alpha=0.85, edgecolor="black", linewidth=0.8)
-    ax2.scatter(x_indices + (idx - 1) * width, mins, color="black", s=25, zorder=5,
+    ax2.bar(x_indices + (idx - 1) * width, means, width, yerr=stds, capsize=3.5,
+            label=sc["name"], color=sc["color"], alpha=0.85, edgecolor="black", linewidth=0.8)
+    ax2.scatter(x_indices + (idx - 1) * width, mins, color="black", s=30, zorder=5,
                 marker="d", label="Best run" if idx == 0 else "")
 
 for sc in scenarios:
-    ax2.axhline(sc["bound"], color=sc["color"], linestyle="--", lw=1.2, alpha=0.7)
+    ax2.axhline(sc["bound"], color=sc["color"], linestyle="--", lw=1.2, alpha=0.75)
 
 ax2.axhline(0.15, color="black", linestyle=":", lw=1.5)
 ax2.set_xticks(x_indices)
-ax2.set_xticklabels([f"L = {L}" for L in depths], fontsize=10, fontweight="bold")
-ax2.set_ylabel(r"Final trace distance $\Delta(\sigma_*, \tau)$", fontsize=11, fontweight="bold")
-ax2.set_xlabel("Ansatz circuit depth $L$", fontsize=11, fontweight="bold")
-ax2.set_title(r"(b) Terminal trace distance vs. depth ablation ($N=30$ seeds)", fontsize=12, fontweight="bold", pad=8)
-ax2.set_ylim(0, 0.40)
-ax2.legend(loc="upper right", frameon=True, fontsize=8.0)
+ax2.set_xticklabels([f"L = {L}" for L in depths], fontsize=9.0, fontweight="bold")
+ax2.set_ylabel(r"Final trace distance $\Delta(\sigma_*, \tau)$", fontsize=10.0, fontweight="bold")
+ax2.set_xlabel("Ansatz circuit depth $L$", fontsize=10.0, fontweight="bold")
+ax2.set_title(r"(b) Terminal trace distance vs. depth", fontsize=10.5, fontweight="bold", pad=9)
+ax2.set_ylim(0, 0.46)
+ax2.tick_params(labelsize=9.0)
+ax2.legend(loc="upper right", frameon=True, fontsize=8.0,
+           borderpad=0.3, labelspacing=0.25, handlelength=1.2, handletextpad=0.35)
 
 # Panel (c)
 for sc in scenarios:
@@ -354,17 +361,17 @@ for sc in scenarios:
     q10_g = np.percentile(data_grad, 10, axis=0)
     q90_g = np.percentile(data_grad, 90, axis=0)
     
-    ax3.plot(x_steps, median_grad, label=sc["label"], color=sc["color"], lw=1.8)
+    ax3.plot(x_steps, median_grad, label=sc["name"], color=sc["color"], lw=1.6)
     ax3.fill_between(x_steps, q10_g, q90_g, color=sc["color"], alpha=0.15)
 
-ax3.set_xlabel("Optimization step", fontsize=11, fontweight="bold")
-ax3.set_ylabel(r"Exact subgradient norm $\|\nabla_\theta \Delta\|$", fontsize=11, fontweight="bold")
-ax3.set_title(r"(c) Evolution of analytical subgradient norm", fontsize=12, fontweight="bold", pad=8)
+ax3.set_xlabel("Optimization step", fontsize=10.0, fontweight="bold")
+ax3.set_ylabel(r"Subgradient norm $\|\nabla_\theta \Delta\|$", fontsize=10.0, fontweight="bold")
+ax3.set_title(r"(c) Analytical subgradient norm", fontsize=10.5, fontweight="bold", pad=9)
 ax3.set_yscale("log")
 ax3.set_xlim(1, STEPS)
-ax3.legend(loc="lower left", frameon=True, fontsize=8.5)
-
-plt.tight_layout()
+ax3.tick_params(labelsize=9.0)
+ax3.legend(loc="lower left", frameon=True, fontsize=8.0,
+           borderpad=0.3, labelspacing=0.25, handlelength=1.2, handletextpad=0.35)
 
 def robust_save_figure(figure, base_name="qgan_geometric_barrier", exts=("pdf", "png")):
     """
@@ -373,13 +380,11 @@ def robust_save_figure(figure, base_name="qgan_geometric_barrier", exts=("pdf", 
     """
     for ext in exts:
         target_path = f"{base_name}.{ext}"
-        
-        # Try deleting prior file if possible
         if os.path.exists(target_path):
             try:
                 os.remove(target_path)
             except OSError:
-                pass  # If locked, saving will trigger PermissionError below
+                pass
                 
         try:
             figure.savefig(target_path, bbox_inches="tight")
