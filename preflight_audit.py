@@ -74,22 +74,25 @@ def run_preflight_screening(tau, epsilon=0.15, m_sys=3):
 
     for arch in architectures:
         a = arch["a"]
-        # Max coherent rank supported by ancilla register
-        k_ancilla = min(2**m_sys, 2**a)
-        T_K = 1.0 - np.sum(evals[:k_ancilla])
+        g_cross = arch["g_layer"] * 2  # для L=2 по 2 CNOT за слой
+        q_prod = 2**g_cross if g_cross > 0 else 1
+        
+        # Полный объединенный эффективный ранг K_eff
+        K_eff = min(2**m_sys, 2**a, q_prod)
+        T_K = 1.0 - np.sum(evals[:K_eff])
         
         # Purity lower bound certificate: r >= 1 - sqrt(K * p)
-        purity_bound = max(0.0, 1.0 - np.sqrt(k_ancilla * purity))
+        purity_bound = max(0.0, 1.0 - np.sqrt(K_eff * purity))
         
         # Necessary capacity rule
-        passes_capacity = k_ancilla >= k_eps
+        passes_capacity = K_eff >= k_eps
         status = "PASSED PRE-FLIGHT" if passes_capacity else "REJECTED (IMPOSSIBILITY)"
 
         print(f"[*] Architecture: {arch['name']}")
-        print(f"    - Ancilla capacity bound: K_ancilla = min(2^{m_sys}, 2^{a}) = {k_ancilla}")
-        print(f"    - Ky Fan spectral tail:  T_{k_ancilla}(tau) = {T_K:.6f}")
-        print(f"    - Purity lower bound:    r >= 1 - sqrt({k_ancilla}*p) = {purity_bound:.4f}")
-        print(f"    - Ancilla capacity test: K_ancilla >= k_eps ({k_ancilla} >= {k_eps}) -> {status}")
+        print(f"    - Effective rank bound:  K_eff = min(2^{m_sys}, 2^{a}, 2^{g_cross}) = {K_eff}")
+        print(f"    - Ky Fan spectral tail:  T_{K_eff}(tau) = {T_K:.6f}")
+        print(f"    - Purity lower bound:    r >= 1 - sqrt({K_eff}*p) = {purity_bound:.4f}")
+        print(f"    - Capacity test:         K_eff >= k_eps ({K_eff} >= {k_eps}) -> {status}")
         if not passes_capacity:
             print(f"      >> HARD ARCHITECTURAL BARRIER: Minimal error {T_K:.4f} >= epsilon ({epsilon:.4f}).")
             print(f"      >> Variational optimization on QPU will strictly fail.")
