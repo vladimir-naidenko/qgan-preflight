@@ -7,7 +7,8 @@ Features:
  - Full depth-ablation study (L in {2, 3, 4}, N = 30 seeds strictly)
  - Post-update terminal evaluation (true state after 180 Adam updates)
  - Exact trace-norm analytical subgradient calculus
- - Publication-calibrated font scaling (8-11 pt, fully legible in two-column layout)
+ - Bitwise-exact speedup via precomputed CNOT layers and cached Ry gates
+ - Publication-calibrated font scaling (8-11 pt, TrueType Type 42 font embedding)
  - Robust file saving (handles Windows Adobe Acrobat file locks gracefully)
  - Generates publication figure: 'qgan_geometric_barrier.pdf' and '.png'
  - Prints full statistics table for direct LaTeX synchronization
@@ -82,8 +83,13 @@ def cnot(c, t, n):
         res[new_i, i] = 1.0
     return res
 
-def precompute_cnots(n):
-    return [cnot(i, (i + 1) % n, n) for i in range(n)]
+def precompute_cnot_layer(n):
+    """Precomputes the full circular CNOT entangling layer (bitwise exact)."""
+    dim = 2**n
+    c_layer = np.eye(dim, dtype=complex)
+    for i in range(n):
+        c_layer = cnot(i, (i + 1) % n, n) @ c_layer
+    return c_layer
 
 def partial_trace(rho_full, n_sys, n_anc):
     if n_anc == 0:
@@ -106,16 +112,18 @@ def trace_distance_and_projector(sigma, target):
         P_plus = np.zeros_like(diff)
     return dist, P_plus
 
-def simulate_circuit_and_gradient(params, n, layers, cnot_list, target_tau, m_sys, a_anc):
+def simulate_circuit_and_gradient(params, n, layers, cnot_layer, target_tau, m_sys, a_anc):
     num_params = (layers + 1) * n
     dim = 2**n
     
+    ry_layers = []
     ry_mats = []
     d_ry_mats = []
     idx = 0
     for l in range(layers + 1):
         layer_ry = [ry(params[idx + i]) for i in range(n)]
         layer_dry = [d_ry(params[idx + i]) for i in range(n)]
+        ry_layers.append(layer_ry)
         ry_mats.append(kron_n(layer_ry))
         d_ry_mats.append(layer_dry)
         idx += n
@@ -125,8 +133,7 @@ def simulate_circuit_and_gradient(params, n, layers, cnot_list, target_tau, m_sy
     for l in range(layers):
         current_U = ry_mats[l] @ current_U
         U_steps.append(('ry', l, current_U))
-        for c_gate in cnot_list:
-            current_U = c_gate @ current_U
+        current_U = cnot_layer @ current_U
         U_steps.append(('cnot', l, current_U))
     current_U = ry_mats[layers] @ current_U
     U_steps.append(('ry', layers, current_U))
@@ -152,12 +159,13 @@ def simulate_circuit_and_gradient(params, n, layers, cnot_list, target_tau, m_sy
         else:
             U_before = U_steps[2 * (l - 1) + 1][2]
             
+        # Preserving la.inv for exact bitwise reproducibility with Table 3
         U_after = U_total @ la.inv(ry_mats[l] @ U_before)
         psi_before = U_before @ psi0
         
         for q in range(n):
             p_idx = l * n + q
-            ops_dry = [ry(params[l * n + i]) for i in range(n)]
+            ops_dry = list(ry_layers[l])
             ops_dry[q] = d_ry_mats[l][q]
             d_kron = kron_n(ops_dry)
             d_psi = U_after @ (d_kron @ psi_before)
@@ -169,9 +177,9 @@ def simulate_circuit_and_gradient(params, n, layers, cnot_list, target_tau, m_sy
 # 3. EXPERIMENT CONFIGURATION (N = 30 everywhere for exact replication)
 # ==============================================================================
 scenarios = [
-    {"a": 0, "name": "Pure (a = 0)",       "color": "#d62728", "bound": T1},
-    {"a": 1, "name": "1 ancilla (a = 1)",   "color": "#ff7f0e", "bound": T2},
-    {"a": 2, "name": "2 ancillas (a = 2)",  "color": "#2ca02c", "bound": T4}
+    {"a": 0, "name": r"Pure ($a = 0$)",       "color": "#d62728", "bound": T1},
+    {"a": 1, "name": r"1 ancilla ($a = 1$)",   "color": "#ff7f0e", "bound": T2},
+    {"a": 2, "name": r"2 ancillas ($a = 2$)",  "color": "#2ca02c", "bound": T4}
 ]
 
 N_SEEDS = 30
@@ -196,7 +204,7 @@ stats_grads = {sc["a"]: np.zeros((N_SEEDS, STEPS)) for sc in scenarios}
 for sc in scenarios:
     a = sc["a"]
     n_total = m + a
-    cnot_list = precompute_cnots(n_total)
+    cnot_layer = precompute_cnot_layer(n_total)
     num_params = (L_FIXED + 1) * n_total
     print(f"[*] Benchmark L={L_FIXED}, a={a} ({N_SEEDS} seeds)...")
     
@@ -209,7 +217,7 @@ for sc in scenarios:
         
         for t in range(1, STEPS + 1):
             loss_val, grad = simulate_circuit_and_gradient(
-                params, n_total, L_FIXED, cnot_list, tau, m, a
+                params, n_total, L_FIXED, cnot_layer, tau, m, a
             )
             stats_losses[a][s, t - 1] = loss_val
             stats_grads[a][s, t - 1] = np.linalg.norm(grad)
@@ -227,7 +235,7 @@ depth_final_loss = {sc["a"]: {L: [] for L in depths} for sc in scenarios}
 for sc in scenarios:
     a = sc["a"]
     n_total = m + a
-    cnot_list = precompute_cnots(n_total)
+    cnot_layer = precompute_cnot_layer(n_total)
     
     for L in depths:
         num_params = (L + 1) * n_total
@@ -241,7 +249,7 @@ for sc in scenarios:
             
             for t in range(1, STEPS_DEPTH + 1):
                 loss_val, grad = simulate_circuit_and_gradient(
-                    params, n_total, L, cnot_list, tau, m, a
+                    params, n_total, L, cnot_layer, tau, m, a
                 )
                 m_adam = beta1 * m_adam + (1 - beta1) * grad
                 v_adam = beta2 * v_adam + (1 - beta2) * (grad**2)
@@ -251,7 +259,7 @@ for sc in scenarios:
             
             # Post-update evaluation: evaluates the true state after 180 updates
             final_loss, _ = simulate_circuit_and_gradient(
-                params, n_total, L, cnot_list, tau, m, a
+                params, n_total, L, cnot_layer, tau, m, a
             )
             depth_final_loss[a][L].append(final_loss)
 
@@ -290,6 +298,12 @@ print("=" * 95)
 # ==============================================================================
 plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
 
+# Embed TrueType (Type 42) fonts in PDF/PS for publisher compliance
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["ps.fonttype"] = 42
+plt.rcParams['font.family'] = 'STIXGeneral'
+plt.rcParams["mathtext.fontset"] = "stix"
+
 # 8.6 x 6.6 inches: comfortable canvas with generous margins and large fonts
 fig = plt.figure(figsize=(8.6, 6.6), dpi=300)
 gs = fig.add_gridspec(2, 2, height_ratios=[1.15, 1.0], hspace=0.36, wspace=0.30)
@@ -318,10 +332,10 @@ ax1.set_ylabel(r"Trace distance $\Delta(\sigma_\theta, \tau)$", fontsize=10.0, f
 ax1.set_xlabel("Optimization step", fontsize=10.0, fontweight="bold")
 ax1.set_title(r"(a) Multi-seed convergence trajectories ($N=30$) vs. exact spectral barriers",
               fontsize=11.0, fontweight="bold", pad=9)
-ax1.set_ylim(-0.02, 0.85)  # Generous headroom for legend above the curves
+ax1.set_ylim(-0.02, 0.88)  # Optimized to resolve convergence near spectral barriers with 0.1 tick grid
 ax1.set_xlim(1, STEPS)
 ax1.tick_params(labelsize=9.0)
-ax1.legend(loc="upper right", frameon=True, fontsize=8.2, ncol=3,
+ax1.legend(loc="upper right", frameon=True, fontsize=9.5, ncol=3,
            borderpad=0.3, labelspacing=0.25, handlelength=1.3, handletextpad=0.35, columnspacing=0.7)
 
 # Panel (b)
@@ -344,9 +358,9 @@ for sc in scenarios:
 
 ax2.axhline(0.15, color="black", linestyle=":", lw=1.5)
 ax2.set_xticks(x_indices)
-ax2.set_xticklabels([f"L = {L}" for L in depths], fontsize=9.0, fontweight="bold")
+ax2.set_xticklabels([rf"$L = {L}$" for L in depths], fontsize=9.0, fontweight="bold")
 ax2.set_ylabel(r"Final trace distance $\Delta(\sigma_*, \tau)$", fontsize=10.0, fontweight="bold")
-ax2.set_xlabel("Ansatz circuit depth $L$", fontsize=10.0, fontweight="bold")
+ax2.set_xlabel(r"Ansatz circuit depth $L$", fontsize=10.0, fontweight="bold")
 ax2.set_title(r"(b) Terminal trace distance vs. depth", fontsize=10.5, fontweight="bold", pad=9)
 ax2.set_ylim(0, 0.46)
 ax2.tick_params(labelsize=9.0)
