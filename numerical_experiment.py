@@ -159,7 +159,6 @@ def simulate_circuit_and_gradient(params, n, layers, cnot_layer, target_tau, m_s
         else:
             U_before = U_steps[2 * (l - 1) + 1][2]
             
-        # Preserving la.inv for exact bitwise reproducibility with Table 3
         U_after = U_total @ la.inv(ry_mats[l] @ U_before)
         psi_before = U_before @ psi0
         
