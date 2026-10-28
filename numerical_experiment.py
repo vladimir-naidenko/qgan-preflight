@@ -8,7 +8,9 @@ Features:
  - Post-update terminal evaluation (true state after 180 Adam updates)
  - Exact trace-norm analytical subgradient calculus
  - Bitwise-exact speedup via precomputed CNOT layers and cached Ry gates
- - Publication-calibrated font scaling (8-11 pt, TrueType Type 42 font embedding)
+ - Publication-calibrated STIX font typography (unified text & math scale)
+ - Proportional height expansion for Panels (b) and (c)
+ - Clean, non-colliding Error Bar (+- 1 SD) representation in Panel (b) legend
  - Robust file saving (handles Windows Adobe Acrobat file locks gracefully)
  - Generates publication figure: 'qgan_geometric_barrier.pdf' and '.png'
  - Prints full statistics table for direct LaTeX synchronization
@@ -19,6 +21,10 @@ import scipy.linalg as la
 import matplotlib.pyplot as plt
 import time
 import os
+import warnings
+
+# Suppress harmless TrueType font timestamp warnings
+warnings.filterwarnings("ignore", message=".*timestamp.*")
 
 # ==============================================================================
 # 1. PHYSICAL TARGET: 1D 3-Qubit Heisenberg Spin Chain (m = 3, d = 8)
@@ -297,15 +303,15 @@ print("=" * 95)
 # ==============================================================================
 plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
 
-# Embed TrueType (Type 42) fonts in PDF/PS for publisher compliance
-plt.rcParams["pdf.fonttype"] = 42
-plt.rcParams["ps.fonttype"] = 42
+# High-fidelity STIX typography matching the physical scale of mathematical symbols
 plt.rcParams['font.family'] = 'STIXGeneral'
 plt.rcParams["mathtext.fontset"] = "stix"
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["ps.fonttype"] = 42
 
-# 8.6 x 6.6 inches: comfortable canvas with generous margins and large fonts
-fig = plt.figure(figsize=(8.6, 6.6), dpi=300)
-gs = fig.add_gridspec(2, 2, height_ratios=[1.15, 1.0], hspace=0.36, wspace=0.30)
+# 8.6 x 8.4 inches: proportional canvas height
+fig = plt.figure(figsize=(8.6, 8.4), dpi=300)
+gs = fig.add_gridspec(2, 2, height_ratios=[1.28, 1.0], hspace=0.36, wspace=0.28)
 
 ax1 = fig.add_subplot(gs[0, :])
 ax2 = fig.add_subplot(gs[1, 0])
@@ -327,15 +333,18 @@ for sc in scenarios:
                 label=rf"Barrier $T_{{{2**a if a>0 else 1}}} = {sc['bound']:.4f}$")
 
 ax1.axhline(0.15, color="black", linestyle=":", lw=1.6, label=r"Tolerance $\epsilon = 0.15$")
-ax1.set_ylabel(r"Trace distance $\Delta(\sigma_\theta, \tau)$", fontsize=10.0, fontweight="bold")
-ax1.set_xlabel("Optimization step", fontsize=10.0, fontweight="bold")
+ax1.set_ylabel(r"Trace distance $\Delta(\sigma_\theta, \tau)$", fontsize=10.5, fontweight="bold")
+ax1.set_xlabel("Optimization step", fontsize=10.5, fontweight="bold")
 ax1.set_title(r"(a) Multi-seed convergence trajectories ($N=30$) vs. exact spectral barriers",
-              fontsize=11.0, fontweight="bold", pad=9)
-ax1.set_ylim(-0.02, 0.88)  # Optimized to resolve convergence near spectral barriers with 0.1 tick grid
+              fontsize=11.5, fontweight="bold", pad=10)
+
+# Vertical axis up to 0.9 with explicit 0.1 ticks
+ax1.set_ylim(-0.02, 0.94)
+ax1.set_yticks(np.arange(0.0, 0.91, 0.1))
 ax1.set_xlim(1, STEPS)
-ax1.tick_params(labelsize=9.0)
-ax1.legend(loc="upper right", frameon=True, fontsize=9.5, ncol=3,
-           borderpad=0.3, labelspacing=0.25, handlelength=1.3, handletextpad=0.35, columnspacing=0.7)
+ax1.tick_params(labelsize=9.5)
+ax1.legend(loc="upper right", frameon=True, fontsize=9.2, ncol=3,
+           borderpad=0.35, labelspacing=0.28, handlelength=1.3, handletextpad=0.35, columnspacing=0.7)
 
 # Panel (b)
 width = 0.22
@@ -356,15 +365,31 @@ for sc in scenarios:
     ax2.axhline(sc["bound"], color=sc["color"], linestyle="--", lw=1.2, alpha=0.75)
 
 ax2.axhline(0.15, color="black", linestyle=":", lw=1.5)
+
+# Lock X-axis strictly to prevent autoscale distortion
+ax2.set_xlim(-0.5, len(depths) - 0.5)
 ax2.set_xticks(x_indices)
-ax2.set_xticklabels([rf"$L = {L}$" for L in depths], fontsize=9.0, fontweight="bold")
-ax2.set_ylabel(r"Final trace distance $\Delta(\sigma_*, \tau)$", fontsize=10.0, fontweight="bold")
-ax2.set_xlabel(r"Ansatz circuit depth $L$", fontsize=10.0, fontweight="bold")
-ax2.set_title(r"(b) Terminal trace distance vs. depth", fontsize=10.5, fontweight="bold", pad=9)
-ax2.set_ylim(0, 0.46)
-ax2.tick_params(labelsize=9.0)
-ax2.legend(loc="upper right", frameon=True, fontsize=8.0,
-           borderpad=0.3, labelspacing=0.25, handlelength=1.2, handletextpad=0.35)
+ax2.set_xticklabels([rf"$L = {L}$" for L in depths], fontsize=9.5, fontweight="bold")
+ax2.set_ylabel(r"Final trace distance $\Delta(\sigma_*, \tau)$", fontsize=10.5, fontweight="bold")
+ax2.set_xlabel(r"Ansatz circuit depth $L$", fontsize=10.5, fontweight="bold")
+ax2.set_title(r"(b) Terminal trace distance vs. depth", fontsize=11.0, fontweight="bold", pad=9)
+
+# Ample headroom up to 0.50 so legend never collides with bars
+ax2.set_ylim(0, 0.50)
+ax2.tick_params(labelsize=9.5)
+
+# Add dummy errorbar with NaN so limits are completely unaffected
+ax2.errorbar([np.nan], [np.nan], yerr=[1.0], fmt='none', ecolor='black',
+             elinewidth=1.2, capsize=3.5, capthick=1.2, label="Mean \u00b1 SD")
+
+# Explicit ordering with generous labelspacing so markers never touch
+handles, labels = ax2.get_legend_handles_labels()
+order_labels = ["Best run", "Mean \u00b1 SD", r"Pure ($a = 0$)", r"1 ancilla ($a = 1$)", r"2 ancillas ($a = 2$)"]
+ordered_handles = [handles[labels.index(lbl)] for lbl in order_labels if lbl in labels]
+ordered_labels = [lbl for lbl in order_labels if lbl in labels]
+
+ax2.legend(ordered_handles, ordered_labels, loc="upper right", frameon=True, fontsize=8.0,
+           borderpad=0.35, labelspacing=0.45, handlelength=1.4, handletextpad=0.45)
 
 # Panel (c)
 for sc in scenarios:
@@ -377,13 +402,13 @@ for sc in scenarios:
     ax3.plot(x_steps, median_grad, label=sc["name"], color=sc["color"], lw=1.6)
     ax3.fill_between(x_steps, q10_g, q90_g, color=sc["color"], alpha=0.15)
 
-ax3.set_xlabel("Optimization step", fontsize=10.0, fontweight="bold")
-ax3.set_ylabel(r"Subgradient norm $\|\nabla_\theta \Delta\|$", fontsize=10.0, fontweight="bold")
-ax3.set_title(r"(c) Analytical subgradient norm", fontsize=10.5, fontweight="bold", pad=9)
+ax3.set_xlabel("Optimization step", fontsize=10.5, fontweight="bold")
+ax3.set_ylabel(r"Subgradient norm $\|\nabla_\theta \Delta\|$", fontsize=10.5, fontweight="bold")
+ax3.set_title(r"(c) Analytical subgradient norm", fontsize=11.0, fontweight="bold", pad=9)
 ax3.set_yscale("log")
 ax3.set_xlim(1, STEPS)
-ax3.tick_params(labelsize=9.0)
-ax3.legend(loc="lower left", frameon=True, fontsize=8.0,
+ax3.tick_params(labelsize=9.5)
+ax3.legend(loc="lower left", frameon=True, fontsize=8.5,
            borderpad=0.3, labelspacing=0.25, handlelength=1.2, handletextpad=0.35)
 
 def robust_save_figure(figure, base_name="qgan_geometric_barrier", exts=("pdf", "png")):
