@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+"""
+numerical_experiment.py
+Rigorous numerical evaluation of expressibility limits in qGANs.
+Features:
+ - Multi-seed statistical benchmark (L = 3, N = 30 seeds)
+ - Full depth-ablation study (L in {2, 3, 4}, N = 30 seeds strictly)
+ - Post-update terminal evaluation (true state after 180 Adam updates)
+ - Exact trace-norm analytical subgradient calculus
+ - Bitwise-exact speedup via precomputed CNOT layers and cached Ry gates
+ - Publication-calibrated STIX font typography (unified text & math scale)
+ - Proportional height expansion for Panels (b) and (c)
+ - Clean, non-colliding Error Bar (+- 1 SD) representation in Panel (b) legend
+ - Robust file saving (handles Windows Adobe Acrobat file locks gracefully)
+ - Generates publication figure: 'qgan_geometric_barrier.pdf' and '.png'
+ - Prints full statistics table for direct LaTeX synchronization
+"""
+
+import numpy as np
+import scipy.linalg as la
+import matplotlib.pyplot as plt
+import time
+import os
+import warnings
+
+# Suppress harmless TrueType font timestamp warnings
+warnings.filterwarnings("ignore", message=".*timestamp.*")
+
+# ==============================================================================
+# 1. PHYSICAL TARGET: 1D 3-Qubit Heisenberg Spin Chain (m = 3, d = 8)
+# ==============================================================================
+m = 3
+d = 2**m
+
+I2 = np.eye(2, dtype=complex)
+X = np.array([[0, 1], [1, 0]], dtype=complex)
+Y = np.array([[0, -1j], [1j, 0]], dtype=complex)
+Z = np.array([[1, 0], [0, -1]], dtype=complex)
+
+def kron_n(op_list):
+    res = op_list[0]
+    for op in op_list[1:]:
+        res = np.kron(res, op)
+    return res
+
+H = np.zeros((d, d), dtype=complex)
+h_field = 0.5
+
+for i in range(m - 1):
+    ops_x = [I2] * m; ops_x[i] = X; ops_x[i+1] = X
+    ops_y = [I2] * m; ops_y[i] = Y; ops_y[i+1] = Y
+    ops_z = [I2] * m; ops_z[i] = Z; ops_z[i+1] = Z
+    H += kron_n(ops_x) + kron_n(ops_y) + kron_n(ops_z)
+
+for i in range(m):
+    ops_z = [I2] * m; ops_z[i] = Z
+    H += h_field * kron_n(ops_z)
+
+beta = 1.0
+exp_H = la.expm(-beta * H)
+tau = exp_H / np.trace(exp_H)
+
+lambdas = np.sort(np.real(la.eigvalsh(tau)))[::-1]
+T1 = 1.0 - lambdas[0]
+T2 = 1.0 - np.sum(lambdas[:2])
+T4 = 1.0 - np.sum(lambdas[:4])
+
+# ==============================================================================
+# 2. VARIATIONAL HEA GENERATOR & EXACT ANALYTICAL SUBGRADIENTS
+# ==============================================================================
+def ry(theta):
+    c = np.cos(theta / 2.0)
+    s = np.sin(theta / 2.0)
+    return np.array([[c, -s], [s, c]], dtype=complex)
+
+def d_ry(theta):
+    c = np.cos(theta / 2.0)
+    s = np.sin(theta / 2.0)
+    return 0.5 * np.array([[-s, -c], [c, -s]], dtype=complex)
+
+def cnot(c, t, n):
+    dim = 2**n
+    res = np.zeros((dim, dim), dtype=complex)
+    for i in range(dim):
+        bits = [(i >> (n - 1 - k)) & 1 for k in range(n)]
+        if bits[c] == 1:
+            bits[t] ^= 1
+        new_i = sum(b << (n - 1 - k) for k, b in enumerate(bits))
+        res[new_i, i] = 1.0
+    return res
+
+def precompute_cnot_layer(n):
+    """Precomputes the full circular CNOT entangling layer (bitwise exact)."""
+    dim = 2**n
+    c_layer = np.eye(dim, dtype=complex)
+    for i in range(n):
+        c_layer = cnot(i, (i + 1) % n, n) @ c_layer
+    return c_layer
+
+def partial_trace(rho_full, n_sys, n_anc):
+    if n_anc == 0:
+        return rho_full
+    d_sys = 2**n_sys
+    d_anc = 2**n_anc
+    reshaped = rho_full.reshape((d_sys, d_anc, d_sys, d_anc))
+    return np.trace(reshaped, axis1=1, axis2=3)
+
+def trace_distance_and_projector(sigma, target):
+    diff = target - sigma
+    diff_herm = (diff + diff.conj().T) / 2.0
+    evals, evecs = la.eigh(diff_herm)
+    
+    dist = 0.5 * np.sum(np.abs(evals))
+    pos_mask = evals > 1e-12
+    if np.any(pos_mask):
+        P_plus = evecs[:, pos_mask] @ evecs[:, pos_mask].conj().T
+    else:
+        P_plus = np.zeros_like(diff)
+    return dist, P_plus
+
+def simulate_circuit_and_gradient(params, n, layers, cnot_layer, target_tau, m_sys, a_anc):
+    num_params = (layers + 1) * n
+    dim = 2**n
+    
+    ry_layers = []
+    ry_mats = []
+    d_ry_mats = []
+    idx = 0
+    for l in range(layers + 1):
+        layer_ry = [ry(params[idx + i]) for i in range(n)]
+        layer_dry = [d_ry(params[idx + i]) for i in range(n)]
+        ry_layers.append(layer_ry)
+        ry_mats.append(kron_n(layer_ry))
+        d_ry_mats.append(layer_dry)
+        idx += n
+        
+    U_steps = []
+    current_U = np.eye(dim, dtype=complex)
+    for l in range(layers):
+        current_U = ry_mats[l] @ current_U
+        U_steps.append(('ry', l, current_U))
+        current_U = cnot_layer @ current_U
+        U_steps.append(('cnot', l, current_U))
+    current_U = ry_mats[layers] @ current_U
+    U_steps.append(('ry', layers, current_U))
+    
+    U_total = current_U
+    psi0 = np.zeros(dim, dtype=complex)
+    psi0[0] = 1.0
+    psi = U_total @ psi0
+    
+    rho = np.outer(psi, psi.conj())
+    sigma = partial_trace(rho, m_sys, a_anc)
+    loss, P_plus = trace_distance_and_projector(sigma, target_tau)
+    
+    if a_anc > 0:
+        P_full = np.kron(P_plus, np.eye(2**a_anc, dtype=complex))
+    else:
+        P_full = P_plus
+        
+    grad = np.zeros(num_params)
+    for l in range(layers + 1):
+        if l == 0:
+            U_before = np.eye(dim, dtype=complex)
+        else:
+            U_before = U_steps[2 * (l - 1) + 1][2]
+            
+        U_after = U_total @ la.inv(ry_mats[l] @ U_before)
+        psi_before = U_before @ psi0
+        
+        for q in range(n):
+            p_idx = l * n + q
+            ops_dry = list(ry_layers[l])
+            ops_dry[q] = d_ry_mats[l][q]
+            d_kron = kron_n(ops_dry)
+            d_psi = U_after @ (d_kron @ psi_before)
+            grad[p_idx] = -2.0 * np.real(psi.conj().T @ P_full @ d_psi)
+            
+    return loss, grad
+
+# ==============================================================================
+# 3. EXPERIMENT CONFIGURATION (N = 30 everywhere for exact replication)
+# ==============================================================================
+scenarios = [
+    {"a": 0, "name": r"Pure ($a = 0$)",       "color": "#d62728", "bound": T1},
+    {"a": 1, "name": r"1 ancilla ($a = 1$)",   "color": "#ff7f0e", "bound": T2},
+    {"a": 2, "name": r"2 ancillas ($a = 2$)",  "color": "#2ca02c", "bound": T4}
+]
+
+N_SEEDS = 30
+STEPS = 160
+LR = 0.08
+L_FIXED = 3
+
+depths = [2, 3, 4]
+N_SEEDS_DEPTH = 30
+STEPS_DEPTH = 180
+
+print("=" * 75)
+print(f" RUNNING BENCHMARKS: Convergence (N={N_SEEDS}) & Depth Ablation (N={N_SEEDS_DEPTH})")
+print("=" * 75)
+
+start_time = time.time()
+
+# 3.1 Convergence benchmark (L = 3)
+stats_losses = {sc["a"]: np.zeros((N_SEEDS, STEPS)) for sc in scenarios}
+stats_grads = {sc["a"]: np.zeros((N_SEEDS, STEPS)) for sc in scenarios}
+
+for sc in scenarios:
+    a = sc["a"]
+    n_total = m + a
+    cnot_layer = precompute_cnot_layer(n_total)
+    num_params = (L_FIXED + 1) * n_total
+    print(f"[*] Benchmark L={L_FIXED}, a={a} ({N_SEEDS} seeds)...")
+    
+    for s in range(N_SEEDS):
+        np.random.seed(1000 + s * 37 + a * 7)
+        params = np.random.normal(0, 0.1, num_params)
+        m_adam = np.zeros(num_params)
+        v_adam = np.zeros(num_params)
+        beta1, beta2, eps_adam = 0.9, 0.999, 1e-8
+        
+        for t in range(1, STEPS + 1):
+            loss_val, grad = simulate_circuit_and_gradient(
+                params, n_total, L_FIXED, cnot_layer, tau, m, a
+            )
+            stats_losses[a][s, t - 1] = loss_val
+            stats_grads[a][s, t - 1] = np.linalg.norm(grad)
+            
+            m_adam = beta1 * m_adam + (1 - beta1) * grad
+            v_adam = beta2 * v_adam + (1 - beta2) * (grad**2)
+            m_hat = m_adam / (1 - beta1**t)
+            v_hat = v_adam / (1 - beta2**t)
+            params -= LR * m_hat / (np.sqrt(v_hat) + eps_adam)
+
+# 3.2 Depth ablation benchmark (L in {2, 3, 4}, N = 30)
+print(f"\n[*] Running Depth Ablation L in {depths} with N={N_SEEDS_DEPTH} seeds...")
+depth_final_loss = {sc["a"]: {L: [] for L in depths} for sc in scenarios}
+
+for sc in scenarios:
+    a = sc["a"]
+    n_total = m + a
+    cnot_layer = precompute_cnot_layer(n_total)
+    
+    for L in depths:
+        num_params = (L + 1) * n_total
+        print(f"    - Running a={a}, L={L} ({num_params} params, {N_SEEDS_DEPTH} seeds)...")
+        for s in range(N_SEEDS_DEPTH):
+            np.random.seed(2000 + s * 43 + a * 13 + L * 3)
+            params = np.random.normal(0, 0.1, num_params)
+            m_adam = np.zeros(num_params)
+            v_adam = np.zeros(num_params)
+            beta1, beta2, eps_adam = 0.9, 0.999, 1e-8
+            
+            for t in range(1, STEPS_DEPTH + 1):
+                loss_val, grad = simulate_circuit_and_gradient(
+                    params, n_total, L, cnot_layer, tau, m, a
+                )
+                m_adam = beta1 * m_adam + (1 - beta1) * grad
+                v_adam = beta2 * v_adam + (1 - beta2) * (grad**2)
+                m_hat = m_adam / (1 - beta1**t)
+                v_hat = v_adam / (1 - beta2**t)
+                params -= LR * m_hat / (np.sqrt(v_hat) + eps_adam)
+            
+            # Post-update evaluation: evaluates the true state after 180 updates
+            final_loss, _ = simulate_circuit_and_gradient(
+                params, n_total, L, cnot_layer, tau, m, a
+            )
+            depth_final_loss[a][L].append(final_loss)
+
+total_elapsed = time.time() - start_time
+print(f"\nAll computations completed successfully in {total_elapsed:.1f} seconds.")
+
+# ==============================================================================
+# 4. PRINT FORMATTED SUMMARY TABLE (Direct input for Table 3 in paper)
+# ==============================================================================
+print("\n" + "=" * 95)
+print(" SUMMARY TABLE OF RESULTS (N = 30 seeds, 180 iterations, Post-Update)")
+print("=" * 95)
+header = f"{'Ancillas':<10} {'Depth':<8} {'Params':<8} {'Final Error (Mean +- SD)':<26} {'Median':<10} {'Best Run':<10} {'Barrier T_K':<12} {'Tol. eps=0.15'}"
+print(header)
+print("-" * 95)
+
+for sc in scenarios:
+    a = sc["a"]
+    n_total = m + a
+    barrier_str = f"T_{2**a if a>0 else 1} ~ {sc['bound']:.4f}"
+    for L in depths:
+        num_params = (L + 1) * n_total
+        res = depth_final_loss[a][L]
+        mean_val = np.mean(res)
+        std_val = np.std(res)
+        med_val = np.median(res)
+        best_val = np.min(res)
+        tol_status = "Pass" if med_val < 0.15 else "Fail"
+        mean_str = f"{mean_val:.4f} +- {std_val:.4f}"
+        print(f"a = {a:<6} L = {L:<4} {num_params:<8} {mean_str:<26} {med_val:<10.4f} {best_val:<10.4f} {barrier_str:<12} {tol_status}")
+
+print("=" * 95)
+
+# ==============================================================================
+# 5. PUBLICATION-QUALITY FIGURE CALIBRATED FOR 2-COLUMN LAYOUT
+# ==============================================================================
+plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+
+# High-fidelity STIX typography matching the physical scale of mathematical symbols
+plt.rcParams['font.family'] = 'STIXGeneral'
+plt.rcParams["mathtext.fontset"] = "stix"
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["ps.fonttype"] = 42
+
+# 8.6 x 8.4 inches: proportional canvas height
+fig = plt.figure(figsize=(8.6, 8.4), dpi=300)
+gs = fig.add_gridspec(2, 2, height_ratios=[1.28, 1.0], hspace=0.36, wspace=0.28)
+
+ax1 = fig.add_subplot(gs[0, :])
+ax2 = fig.add_subplot(gs[1, 0])
+ax3 = fig.add_subplot(gs[1, 1])
+
+x_steps = np.arange(1, STEPS + 1)
+
+# Panel (a)
+for sc in scenarios:
+    a = sc["a"]
+    data = stats_losses[a]
+    median = np.median(data, axis=0)
+    q10 = np.percentile(data, 10, axis=0)
+    q90 = np.percentile(data, 90, axis=0)
+    
+    ax1.plot(x_steps, median, label=f"{sc['name']} (med.)", color=sc["color"], lw=2.0)
+    ax1.fill_between(x_steps, q10, q90, color=sc["color"], alpha=0.18, label=f"{sc['name']} (10-90%)")
+    ax1.axhline(sc["bound"], color=sc["color"], linestyle="--", lw=1.3, alpha=0.85,
+                label=rf"Barrier $T_{{{2**a if a>0 else 1}}} = {sc['bound']:.4f}$")
+
+ax1.axhline(0.15, color="black", linestyle=":", lw=1.6, label=r"Tolerance $\epsilon = 0.15$")
+ax1.set_ylabel(r"Trace distance $\Delta(\sigma_\theta, \tau)$", fontsize=10.5, fontweight="bold")
+ax1.set_xlabel("Optimization step", fontsize=10.5, fontweight="bold")
+ax1.set_title(r"(a) Multi-seed convergence trajectories ($N=30$) vs. exact spectral barriers",
+              fontsize=11.5, fontweight="bold", pad=10)
+
+# Vertical axis up to 0.9 with explicit 0.1 ticks
+ax1.set_ylim(-0.02, 0.94)
+ax1.set_yticks(np.arange(0.0, 0.91, 0.1))
+ax1.set_xlim(1, STEPS)
+ax1.tick_params(labelsize=9.5)
+ax1.legend(loc="upper right", frameon=True, fontsize=9.2, ncol=3,
+           borderpad=0.35, labelspacing=0.28, handlelength=1.3, handletextpad=0.35, columnspacing=0.7)
+
+# Panel (b)
+width = 0.22
+x_indices = np.arange(len(depths))
+
+for idx, sc in enumerate(scenarios):
+    a = sc["a"]
+    means = [np.mean(depth_final_loss[a][L]) for L in depths]
+    stds = [np.std(depth_final_loss[a][L]) for L in depths]
+    mins = [np.min(depth_final_loss[a][L]) for L in depths]
+    
+    ax2.bar(x_indices + (idx - 1) * width, means, width, yerr=stds, capsize=3.5,
+            label=sc["name"], color=sc["color"], alpha=0.85, edgecolor="black", linewidth=0.8)
+    ax2.scatter(x_indices + (idx - 1) * width, mins, color="black", s=30, zorder=5,
+                marker="d", label="Best run" if idx == 0 else "")
+
+for sc in scenarios:
+    ax2.axhline(sc["bound"], color=sc["color"], linestyle="--", lw=1.2, alpha=0.75)
+
+ax2.axhline(0.15, color="black", linestyle=":", lw=1.5)
+
+# Lock X-axis strictly to prevent autoscale distortion
+ax2.set_xlim(-0.5, len(depths) - 0.5)
+ax2.set_xticks(x_indices)
+ax2.set_xticklabels([rf"$L = {L}$" for L in depths], fontsize=9.5, fontweight="bold")
+ax2.set_ylabel(r"Final trace distance $\Delta(\sigma_*, \tau)$", fontsize=10.5, fontweight="bold")
+ax2.set_xlabel(r"Ansatz circuit depth $L$", fontsize=10.5, fontweight="bold")
+ax2.set_title(r"(b) Terminal trace distance vs. depth", fontsize=11.0, fontweight="bold", pad=9)
+
+# Ample headroom up to 0.50 so legend never collides with bars
+ax2.set_ylim(0, 0.50)
+ax2.tick_params(labelsize=9.5)
+
+# Add dummy errorbar with NaN so limits are completely unaffected
+ax2.errorbar([np.nan], [np.nan], yerr=[1.0], fmt='none', ecolor='black',
+             elinewidth=1.2, capsize=3.5, capthick=1.2, label="Mean \u00b1 SD")
+
+# Explicit ordering with generous labelspacing so markers never touch
+handles, labels = ax2.get_legend_handles_labels()
+order_labels = ["Best run", "Mean \u00b1 SD", r"Pure ($a = 0$)", r"1 ancilla ($a = 1$)", r"2 ancillas ($a = 2$)"]
+ordered_handles = [handles[labels.index(lbl)] for lbl in order_labels if lbl in labels]
+ordered_labels = [lbl for lbl in order_labels if lbl in labels]
+
+ax2.legend(ordered_handles, ordered_labels, loc="upper right", frameon=True, fontsize=8.0,
+           borderpad=0.35, labelspacing=0.45, handlelength=1.4, handletextpad=0.45)
+
+# Panel (c)
+for sc in scenarios:
+    a = sc["a"]
+    data_grad = stats_grads[a]
+    median_grad = np.median(data_grad, axis=0)
+    q10_g = np.percentile(data_grad, 10, axis=0)
+    q90_g = np.percentile(data_grad, 90, axis=0)
+    
+    ax3.plot(x_steps, median_grad, label=sc["name"], color=sc["color"], lw=1.6)
+    ax3.fill_between(x_steps, q10_g, q90_g, color=sc["color"], alpha=0.15)
+
+ax3.set_xlabel("Optimization step", fontsize=10.5, fontweight="bold")
+ax3.set_ylabel(r"Subgradient norm $\|\nabla_\theta \Delta\|$", fontsize=10.5, fontweight="bold")
+ax3.set_title(r"(c) Analytical subgradient norm", fontsize=11.0, fontweight="bold", pad=9)
+ax3.set_yscale("log")
+ax3.set_xlim(1, STEPS)
+ax3.tick_params(labelsize=9.5)
+ax3.legend(loc="lower left", frameon=True, fontsize=8.5,
+           borderpad=0.3, labelspacing=0.25, handlelength=1.2, handletextpad=0.35)
+
+def robust_save_figure(figure, base_name="qgan_geometric_barrier", exts=("pdf", "png")):
+    """
+    Saves figure robustly. If a file is locked by a viewer (e.g. Adobe Acrobat on Windows),
+    it avoids crashing and writes an alternative fallback file instead.
+    """
+    for ext in exts:
+        target_path = f"{base_name}.{ext}"
+        if os.path.exists(target_path):
+            try:
+                os.remove(target_path)
+            except OSError:
+                pass
+                
+        try:
+            figure.savefig(target_path, bbox_inches="tight")
+            print(f"[OK] Saved figure: '{target_path}'")
+        except PermissionError:
+            fallback_path = f"{base_name}_fallback_{int(time.time())}.{ext}"
+            print(f"[!] Warning: '{target_path}' is locked by another process (e.g., Adobe Acrobat Reader).")
+            print(f"    Writing fallback copy to '{fallback_path}' instead.")
+            try:
+                figure.savefig(fallback_path, bbox_inches="tight")
+                print(f"[OK] Saved fallback figure: '{fallback_path}'")
+            except Exception as err:
+                print(f"[ERROR] Could not save fallback: {err}")
+        except Exception as err:
+            print(f"[ERROR] Unexpected error while saving '{target_path}': {err}")
+
+robust_save_figure(fig, base_name="qgan_geometric_barrier", exts=("pdf", "png"))
